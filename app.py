@@ -21,7 +21,7 @@ os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
 embeddings = download_hugging_face_embeddings()
 
-index_name = "medical-chatbot"
+index_name = "pdf-index"
 
 docsearch = PineconeVectorStore.from_existing_index(
     index_name=index_name,
@@ -50,11 +50,21 @@ rag_chain = create_retrieval_chain(retriever, question_answer_chain)
 def index():
     return render_template("chat.html")
 
-@app.route("/get", methods=["GET", "POST"])
+from google.api_core.exceptions import ResourceExhausted
+
+@app.route("/get", methods=["POST"])
 def chat():
     msg = request.form["msg"]
-    response = rag_chain.invoke({"input": msg})
-    return str(response["answer"])
 
+    try:
+        response = rag_chain.invoke({"input": msg})
+        return response["answer"]
+
+    except ResourceExhausted:
+        return "Gemini API quota exceeded. Please try again later."
+
+    except Exception as e:
+        return f"Error: {e}"
+    
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=8080, debug=False)
