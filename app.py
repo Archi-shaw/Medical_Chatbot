@@ -13,11 +13,11 @@ from langchain_core.prompts import ChatPromptTemplate
 
 import os
 
+
+
 app = Flask(__name__)
 
 load_dotenv()
-
-
 
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
@@ -33,54 +33,50 @@ os.environ["GOOGLE_API_KEY"] = GOOGLE_API_KEY
 
 INDEX_NAME = "pdf-index"
 
-rag_chain = None
 
 
-def get_rag_chain():
-    global rag_chain
+print("Loading embedding model...")
 
-    if rag_chain is None:
-        print("Loading embedding model...")
+embeddings = download_hugging_face_embeddings()
 
-        embeddings = download_hugging_face_embeddings()
+print("Connecting to Pinecone...")
 
-        print("Connecting to Pinecone...")
+vectorstore = PineconeVectorStore.from_existing_index(
+    index_name=INDEX_NAME,
+    embedding=embeddings
+)
 
-        docsearch = PineconeVectorStore.from_existing_index(
-            index_name=INDEX_NAME,
-            embedding=embeddings
-        )
+retriever = vectorstore.as_retriever(
+    search_type="similarity",
+    search_kwargs={"k": 3}
+)
 
-        retriever = docsearch.as_retriever(
-            search_type="similarity",
-            search_kwargs={"k": 3}
-        )
+print("Loading Gemini...")
 
-        llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0
-        )
+llm = ChatGoogleGenerativeAI(
+    model="gemini-2.5-flash",
+    temperature=0
+)
 
-        prompt = ChatPromptTemplate.from_messages(
-            [
-                ("system", system_prompt),
-                ("human", "{input}")
-            ]
-        )
+prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", system_prompt),
+        ("human", "{input}")
+    ]
+)
 
-        question_answer_chain = create_stuff_documents_chain(
-            llm,
-            prompt
-        )
+document_chain = create_stuff_documents_chain(
+    llm,
+    prompt
+)
 
-        rag_chain = create_retrieval_chain(
-            retriever,
-            question_answer_chain
-        )
+rag_chain = create_retrieval_chain(
+    retriever,
+    document_chain
+)
 
-        print("RAG chain loaded successfully!")
+print("RAG chain ready!")
 
-    return rag_chain
 
 
 @app.route("/")
@@ -90,19 +86,21 @@ def index():
 
 @app.route("/get", methods=["POST"])
 def chat():
-    msg = request.form["msg"]
+    msg = request.form.get("msg", "").strip()
+
+    if not msg:
+        return "Please enter a message."
 
     try:
-        chain = get_rag_chain()
-        response = chain.invoke({"input": msg})
+        response = rag_chain.invoke({"input": msg})
         return response["answer"]
 
     except ResourceExhausted:
         return "Gemini API quota exceeded. Please try again later."
 
     except Exception as e:
-        print(e)
-        return f"Error: {str(e)}"
+        print("ERROR:", e)
+        return f"Error: {e}"
 
 
 
